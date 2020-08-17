@@ -1,25 +1,24 @@
 import * as React from 'react';
-import HomePage from './home-page.component';
-import * as ReactDOM from 'react-dom';
-import ProjectList from "./project-list.component";
-import {getBrowser, isChrome} from "../helpers/browser-helpers";
-import {isAppTypeDesktop, isAppTypeExtension, isAppTypeMobile} from "../helpers/app-types-helpers";
-import {getDefaultProjectEnums} from "../enums/default-project.enum";
-import {ProjectHelpers} from "../helpers/project-helpers";
+import {getBrowser, isChrome} from "../helpers/browser-helper";
+import {isAppTypeDesktop, isAppTypeExtension} from "../helpers/app-types-helper";
 import Header from "./header.component";
-import WorkspaceList from "./workspace-list.component";
 import {UserService} from "../services/user-service";
 import {LocalStorageService} from "../services/localStorage-service";
 import {getLocalStorageEnums} from "../enums/local-storage.enum";
 import TimePicker from 'antd/lib/time-picker';
 import moment from "moment";
-import {HtmlStyleHelpers} from "../helpers/html-style-helpers";
+import {HtmlStyleHelper} from "../helpers/html-style-helper";
 import {getKeyCodes} from "../enums/key-codes.enum";
+import Pomodoro from "./pomodoro.component";
+import DarkModeComponent from "./dark-mode.component";
+import DefaultProject from "./default-project.component";
+import Toaster from "./toaster-component";
+import * as ReactDOM from "react-dom";
+import HomePage from "./home-page.component";
 
-const projectHelpers = new ProjectHelpers();
 const userService = new UserService();
 const localStorageService = new LocalStorageService();
-const htmlStyleHelpers = new HtmlStyleHelpers();
+const htmlStyleHelpers = new HtmlStyleHelper();
 
 const daysOfWeek = [
     {id:1, name:"Mo"},
@@ -39,8 +38,7 @@ class Settings extends React.Component {
         this.state = {
             userEmail: '',
             userPicture: null,
-            defaultProject: null,
-            defaultProjectEnabled: false,
+            createObjects: JSON.parse(localStorageService.get('createObjects', false)), // TODO what is the sensible default here?
             isSelfHosted: JSON.parse(localStorageService.get('selfHosted', false)),
             idleDetection: false,
             idleDetectionCounter: null,
@@ -50,23 +48,18 @@ class Settings extends React.Component {
             reminderToTime: null,
             reminderMinutesSinceLastEntry: 0,
             autoStartOnBrowserStart: false,
-            autoStopOnBrowserClose: false
+            autoStopOnBrowserClose: false,
+            changeSaved: false
         };
-
-        this.toggleDefaultProjectEnabled = this.toggleDefaultProjectEnabled.bind(this);
     }
 
     componentDidMount(){
         this.getUserSettings();
-        this.updateDefaultProjectEnabled(this.getDefaultProject());
 
         if (isAppTypeExtension()) {
             this.isIdleDetectionOn();
             this.isReminderOn();
             this.isAutoStartStopOn();
-        }
-
-        if (!isAppTypeMobile()) {
             this.isTimerShortcutOn();
         }
     }
@@ -90,7 +83,7 @@ class Settings extends React.Component {
                     () => {
                         const idleElem = document.getElementById('idleDetection');
                         if (this.state.idleDetection) {
-                            idleElem.style.maxHeight = idleElem.scrollHeight + 'px';
+                            idleElem.style.maxHeight = idleElem.scrollHeight + 40 + 'px';
                         } else {
                             idleElem.style.maxHeight = '0';
                         }
@@ -135,12 +128,12 @@ class Settings extends React.Component {
                             reminderElem.style.maxHeight = '0';
                         }
                     },
-                    150
+                    200
                 );
             }
         });
 
-        setTimeout(() => this.checkForRemindersDatesAndTimes(), 150);
+        setTimeout(() => this.checkForRemindersDatesAndTimes(), 200);
     }
 
     isAutoStartStopOn() {
@@ -172,26 +165,8 @@ class Settings extends React.Component {
 
         reminderDatesAndTimesFromStorageForUser.dates.forEach(date => {
             const activeDayName = daysOfWeek.filter(day => day.id === date).map(day => day.name)[0];
-            document.getElementById(activeDayName).style.border = "1px solid #0091ea";
+            document.getElementById(activeDayName).classList.add('day-active');
         });
-    }
-
-    selectWorkspace(workspaceId) {
-        userService.setDefaultWorkspace(workspaceId)
-            .then(response => {
-                localStorage.setItem('activeWorkspaceId', workspaceId);
-                if (isAppTypeExtension()) {
-                    getBrowser().storage.sync.set({
-                        activeWorkspaceId: (workspaceId)
-                    });
-                }
-                this.setState({
-                    defaultProjectEnabled: false
-                });
-                this.updateDefaultProjectEnabled(this.getDefaultProject());
-            })
-            .catch(() => {
-            });
     }
 
     getUserSettings() {
@@ -206,78 +181,19 @@ class Settings extends React.Component {
             })
     }
 
-    saveSettings() {
-        ReactDOM.render(<HomePage/>, document.getElementById('mount'))
-    }
-
-    setDefaultProject(defaultProject) {
-        const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
-        const defaultProjects = projectHelpers.getDefaultProjectListFromStorage();
-        const defaultProjectForWorkspace = this.getDefaultProject();
-
-        if (defaultProjectForWorkspace) {
-            const index = defaultProjects.findIndex(
-                (defaultProject) => defaultProject.project.id === defaultProjectForWorkspace.id);
-            defaultProjects[index].project = defaultProject;
+    toggleCreateObjects() {
+        if (this.state.createObjects) {
+            localStorageService.set('createObjects', false, getLocalStorageEnums().PERMANENT_PREFIX);
+            this.setState({
+                createObjects: false
+            });
         } else {
-            defaultProjects.push(this.createDefaultProject(activeWorkspaceId, defaultProject));
+            localStorageService.set('createObjects', true, getLocalStorageEnums().PERMANENT_PREFIX);
+            this.setState({
+                createObjects: true
+            });
         }
-
-        localStorage.setItem(
-            getDefaultProjectEnums().DEFAULT_PROJECTS,
-            JSON.stringify(defaultProjects)
-        );
-    }
-
-    getDefaultProject() {
-        const defaultProjects = projectHelpers.getDefaultProjectListFromStorage();
-        const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
-
-        const defProject =
-            projectHelpers.filterProjectsByWorkspace(defaultProjects, activeWorkspaceId);
-
-        return defProject && defProject.project && defProject.project.id ?
-                    defProject.project : null;
-    }
-
-    updateDefaultProjectEnabled(project) {
-        this.setState({defaultProjectEnabled: project  ? true : false})
-
-    }
-
-    toggleDefaultProjectEnabled() {
-        const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
-        const defaultProjectEnabledNewValue = !this.state.defaultProjectEnabled;
-
-        this.setState({
-            defaultProjectEnabled: defaultProjectEnabledNewValue
-        });
-
-        if (defaultProjectEnabledNewValue) {
-            this.setInitialDefaultProject(activeWorkspaceId);
-        } else {
-            projectHelpers.clearDefaultProjectForWorkspace(activeWorkspaceId);
-        }
-    }
-
-    setInitialDefaultProject(activeWorkspaceId) {
-        const defaultProjects = projectHelpers.getDefaultProjectListFromStorage();
-        let initialProject = {};
-        initialProject.id = getDefaultProjectEnums().LAST_USED_PROJECT;
-        const createdDefaultProject = this.createDefaultProject(
-            activeWorkspaceId,
-            initialProject
-        );
-
-        defaultProjects.push(createdDefaultProject);
-        projectHelpers.setDefaultProjectsToStorage(defaultProjects);
-    }
-
-    createDefaultProject(activeWorkspaceId, project) {
-        return {
-            project: project,
-            workspaceId: activeWorkspaceId
-        };
+        this.showSuccessMessage();
     }
 
     toggleIdleDetection() {
@@ -309,7 +225,7 @@ class Settings extends React.Component {
             this.setState({
                 idleDetection: true,
                 idleDetectionCounter: idleCounter
-            }, () => idleElem.style.maxHeight = idleElem.scrollHeight + 'px');
+            }, () => idleElem.style.maxHeight = idleElem.scrollHeight + 40 + 'px');
 
             this.sendIdleDetectionRequest(idleCounter);
         }
@@ -319,6 +235,8 @@ class Settings extends React.Component {
             JSON.stringify(idleDetectionToSaveInStorage),
             getLocalStorageEnums().PERMANENT_PREFIX
         );
+
+        this.showSuccessMessage();
     }
 
     changeIdleCounter(event) {
@@ -355,6 +273,8 @@ class Settings extends React.Component {
             JSON.stringify(idleDetectionToSaveInStorage),
             getLocalStorageEnums().PERMANENT_PREFIX
         );
+
+        this.showSuccessMessage();
     }
 
     changeIdleDetectionCounterState(event) {
@@ -364,16 +284,20 @@ class Settings extends React.Component {
     }
 
     sendIdleDetectionRequest(counter) {
-        getBrowser().runtime.sendMessage({
-            eventName: "idleDetection",
-            counter: counter
-        });
+        if (isAppTypeExtension()) {
+            getBrowser().runtime.sendMessage({
+                eventName: "idleDetection",
+                counter: counter
+            });
+        }
     }
 
     sendReminderRequest() {
-        getBrowser().runtime.sendMessage({
-            eventName: "reminder"
-        });
+        if (isAppTypeExtension()) {
+            getBrowser().runtime.sendMessage({
+                eventName: "reminder"
+            });
+        }
     }
 
     toggleTimerShortcut() {
@@ -407,11 +331,14 @@ class Settings extends React.Component {
             });
         }
 
-        localStorageService.set(
-            'timerShortcut',
-            JSON.stringify(timerShortcutToSaveInStorage),
-            getLocalStorageEnums().PERMANENT_PREFIX
-        );
+        if (timerShortcutToSaveInStorage) {
+            localStorageService.set(
+                'timerShortcut',
+                JSON.stringify(timerShortcutToSaveInStorage),
+                getLocalStorageEnums().PERMANENT_PREFIX
+            );
+            this.showSuccessMessage();
+        }
     }
 
     toggleReminder() {
@@ -492,6 +419,8 @@ class Settings extends React.Component {
             JSON.stringify(reminderToSaveInStorage),
             getLocalStorageEnums().PERMANENT_PREFIX
         );
+
+        this.showSuccessMessage();
     }
 
     changeReminderMinutes(event) {
@@ -522,8 +451,12 @@ class Settings extends React.Component {
             getLocalStorageEnums().PERMANENT_PREFIX
         );
 
-        getBrowser().extension.getBackgroundPage().removeReminderTimer();
-        getBrowser().extension.getBackgroundPage().addReminderTimer();
+        if (isAppTypeExtension()) {
+            getBrowser().extension.getBackgroundPage().removeReminderTimer();
+            getBrowser().extension.getBackgroundPage().addReminderTimer();
+        }
+
+        this.showSuccessMessage();
     }
 
     changeReminderMinutesState(event) {
@@ -540,10 +473,12 @@ class Settings extends React.Component {
                 if (reminder.userId === userId) {
                     if (reminder.dates.includes(day.id)) {
                         reminder.dates.splice(reminder.dates.indexOf(day.id), 1);
-                        document.getElementById(day.name).style.border = "1px solid #C6D2D9";
+                        setTimeout(() => {
+                            document.getElementById(day.name).classList.remove('day-active');
+                        }, 100);
                     } else {
                         reminder.dates.push(day.id);
-                        document.getElementById(day.name).style.border = "1px solid #0091ea";
+                        document.getElementById(day.name).classList.add('day-active');
                     }
                 }
 
@@ -556,8 +491,11 @@ class Settings extends React.Component {
             getLocalStorageEnums().PERMANENT_PREFIX
         );
 
-        getBrowser().extension.getBackgroundPage().removeReminderTimer();
-        getBrowser().extension.getBackgroundPage().addReminderTimer();
+        if (isAppTypeExtension()) {
+            getBrowser().extension.getBackgroundPage().removeReminderTimer();
+            getBrowser().extension.getBackgroundPage().addReminderTimer();
+        }
+        this.showSuccessMessage();
     }
 
     selectReminderFromTime(time, timeString) {
@@ -583,7 +521,6 @@ class Settings extends React.Component {
                 this.changeTime(this.state.reminderFromTime, 'fromTime');
             }
         }
-
     }
 
     openReminderToTimePicker(event) {
@@ -616,8 +553,12 @@ class Settings extends React.Component {
             getLocalStorageEnums().PERMANENT_PREFIX
         );
 
-        getBrowser().extension.getBackgroundPage().removeReminderTimer();
-        getBrowser().extension.getBackgroundPage().addReminderTimer();
+        if (isAppTypeExtension()) {
+            getBrowser().extension.getBackgroundPage().removeReminderTimer();
+            getBrowser().extension.getBackgroundPage().addReminderTimer();
+        }
+
+        this.showSuccessMessage();
     }
 
     fadeBackgroundAroundTimePicker(event) {
@@ -689,6 +630,8 @@ class Settings extends React.Component {
             JSON.stringify(autoStartFromStorage),
             getLocalStorageEnums().PERMANENT_PREFIX
         );
+
+        this.showSuccessMessage();
     }
 
     toggleAutoStopOnBrowserClose() {
@@ -738,6 +681,17 @@ class Settings extends React.Component {
             JSON.stringify(autoStopFromStorage),
             getLocalStorageEnums().PERMANENT_PREFIX
         );
+
+        this.showSuccessMessage();
+    }
+
+    showSuccessMessage() {
+        this.toaster.toast('success', 'Change saved.', 2);
+    }
+
+    goBackToHomePage() {
+        ReactDOM.unmountComponentAtNode(document.getElementById('mount'));
+        ReactDOM.render(<HomePage/>, document.getElementById('mount'));
     }
 
     render(){
@@ -751,45 +705,46 @@ class Settings extends React.Component {
             return null;
         } else {
             return(
-                <div>
-                    <Header
-                        showActions={false}
+                <div className="settings_page">
+                    <Toaster
+                        ref={instance => {
+                            this.toaster = instance
+                        }}
                     />
+                    <div className="settings_page__header">
+                        <Header
+                            showActions={false}
+                            backButton={true}
+                            goBackTo={this.goBackToHomePage.bind(this)}
+                        />
+                    </div>
                     <div className="user-settings">
                         <span><img src={this.state.userPicture}/></span>
                         <span>{this.state.userEmail}</span>
                     </div>
-                    <WorkspaceList
-                        selectWorkspace={this.selectWorkspace.bind(this)}
+                    <DefaultProject
+                        workspaceSettings={this.props.workspaceSettings}
+                        changeSaved={this.showSuccessMessage.bind(this)}
                     />
-                    <div className="settings-default-project">
-                        <span className="settings-default-project-checkbox"
-                              onClick={this.toggleDefaultProjectEnabled}>
+                    <div className={isAppTypeExtension() ? "settings__send-errors" : "disabled"}
+                         onClick={this.toggleCreateObjects.bind(this)}>
+                        <span className={this.state.createObjects ?
+                            "settings__send-errors__checkbox checked" : "settings__send-errors__checkbox"}>
                             <img src="./assets/images/checked.png"
-                                 className={this.state.defaultProjectEnabled ?
-                                     "settings-default-project-checkbox--img" :
-                                     "settings-default-project-checkbox--img_hidden"}/>
+                                 className={this.state.createObjects ?
+                                     "settings__send-errors__checkbox--img" :
+                                     "settings__send-errors__checkbox--img_hidden"}/>
                         </span>
-                        <span className="settings-project-title">Default project</span>
-                        {this.state.defaultProjectEnabled &&
-                            <div className="settings-default-project__project-list">
-                                <ProjectList
-                                    ref={instance => {
-                                        this.projectList = instance
-                                    }}
-                                    selectedProject={this.state.defaultProjectEnabled ?
-                                        this.getDefaultProject().id : null}
-                                    selectProject={this.setDefaultProject.bind(this)}
-                                    noTasks={true}
-                                    defaultProject={true}
-                                    workspaceSettings={this.props.workspaceSettings}
-                                />
-                            </div>
-                        }
+                        <span className="settings__send-errors__title">Integrations can create projects/tasks/tags</span>
                     </div>
-                    <div className={!this.state.isSelfHosted ? "settings__send-errors" : "disabled"}>
-                        <span className="settings__send-errors__checkbox"
-                              onClick={this.toggleTimerShortcut.bind(this)}>
+                    <DarkModeComponent
+                        changeSaved={this.showSuccessMessage.bind(this)}
+                    />
+                    <div className={isAppTypeExtension() && !this.state.isSelfHosted ?
+                        "settings__send-errors" : "disabled"}
+                         onClick={this.toggleTimerShortcut.bind(this)}>
+                        <span className={this.state.timerShortcut ?
+                            "settings__send-errors__checkbox checked" : "settings__send-errors__checkbox"}>
                             <img src="./assets/images/checked.png"
                                  className={this.state.timerShortcut ?
                                      "settings__send-errors__checkbox--img" :
@@ -798,37 +753,44 @@ class Settings extends React.Component {
                         <span className="settings__send-errors__title">Start/stop timer shortcut</span>
                         <span className="settings__send-errors__title--shortcut">(Ctrl+Shift+U)</span>
                     </div>
-                    <div className={isAppTypeExtension() && isChrome() ? "settings__auto_start_on_browser_start" : "disabled"}>
-                        <span className="settings__auto_start_on_browser_start__checkbox"
-                              onClick={this.toggleAutoStartOnBrowserStart.bind(this)}>
+                    <div className={isAppTypeExtension() && isChrome() ?
+                            "settings__auto_start_on_browser_start" : "disabled"}
+                         onClick={this.toggleAutoStartOnBrowserStart.bind(this)}>
+                        <span className={this.state.autoStartOnBrowserStart ?
+                            "settings__auto_start_on_browser_start__checkbox checked" :
+                            "settings__auto_start_on_browser_start__checkbox"}>
                             <img src="./assets/images/checked.png"
                                  className={this.state.autoStartOnBrowserStart ?
                                      "settings__auto_start_on_browser_start__checkbox--img" :
                                      "settings__auto_start_on_browser_start__checkbox--img_hidden"}/>
                         </span>
                         <span className="settings__auto_start_on_browser_start__title">
-                            Start automatically when browser starts
+                            Start timer when browser starts
                         </span>
                     </div>
-                    <div className={isAppTypeExtension() && isChrome() ? "settings__auto_stop_on_browser_close" : "disabled"}>
-                        <span className="settings__auto_stop_on_browser_close__checkbox"
-                              onClick={this.toggleAutoStopOnBrowserClose.bind(this)}>
+                    <div className={isAppTypeExtension() && isChrome() ?
+                            "settings__auto_stop_on_browser_close" : "disabled"}
+                         onClick={this.toggleAutoStopOnBrowserClose.bind(this)}>
+                        <span className={this.state.autoStopOnBrowserClose ?
+                            "settings__auto_stop_on_browser_close__checkbox checked" :
+                            "settings__auto_stop_on_browser_close__checkbox"}>
                             <img src="./assets/images/checked.png"
                                  className={this.state.autoStopOnBrowserClose ?
                                      "settings__auto_stop_on_browser_close__checkbox--img" :
                                      "settings__auto_stop_on_browser_close__checkbox--img_hidden"}/>
                         </span>
                         <span className="settings__auto_stop_on_browser_close__title">
-                            Stop automatically when browser closes
+                            Stop timer when browser closes
                         </span>
                     </div>
-                    <div className={isAppTypeExtension() ? "settings__idle-detection expandTrigger" : "disabled"}>
-                        <span className="settings__idle-detection__checkbox"
-                              onClick={this.toggleReminder.bind(this)}>
+                    <div className={isAppTypeExtension() ? "settings__reminder__section expandTrigger" : "disabled"}
+                         onClick={this.toggleReminder.bind(this)}>
+                        <span className={this.state.reminder ?
+                            "settings__reminder__section__checkbox checked" : "settings__reminder__section__checkbox"}>
                             <img src="./assets/images/checked.png"
                                  className={this.state.reminder ?
-                                     "settings__idle-detection__checkbox--img" :
-                                     "settings__idle-detection__checkbox--img_hidden"}/>
+                                     "settings__reminder__section__checkbox--img" :
+                                     "settings__reminder__section__checkbox--img_hidden"}/>
                         </span>
                         <span className="settings__send-errors__title">Remind me to track time</span>
                     </div>
@@ -853,6 +815,7 @@ class Settings extends React.Component {
                             <div className="settings__reminder__times--from">
                                 <p>From</p>
                                 <TimePicker id="reminderFromTime"
+                                            className="settings__reminder__time_picker"
                                             value={moment(this.state.reminderFromTime, 'HH:mm')}
                                             format="HH:mm"
                                             size="large"
@@ -863,6 +826,7 @@ class Settings extends React.Component {
                             <div className="settings__reminder__times--to">
                                 <p>To</p>
                                 <TimePicker id="reminderFromTime"
+                                            className="settings__reminder__time_picker"
                                             value={moment(this.state.reminderToTime, "HH:mm")}
                                             format="HH:mm"
                                             size="large"
@@ -879,9 +843,10 @@ class Settings extends React.Component {
                             <p>minutes since last entry</p>
                         </div>
                     </div>
-                    <div className={isAppTypeExtension() ? "settings__idle-detection expandTrigger" : "disabled"}>
-                        <span className="settings__idle-detection__checkbox"
-                              onClick={this.toggleIdleDetection.bind(this)}>
+                    <div className={isAppTypeExtension() ? "settings__idle-detection expandTrigger" : "disabled"}
+                         onClick={this.toggleIdleDetection.bind(this)}>
+                        <span className={this.state.idleDetection ?
+                            "settings__idle-detection__checkbox checked" : "settings__idle-detection__checkbox"}>
                             <img src="./assets/images/checked.png"
                                  className={this.state.idleDetection ?
                                      "settings__idle-detection__checkbox--img" :
@@ -901,9 +866,9 @@ class Settings extends React.Component {
                             <p>minutes</p>
                         </div>
                     </div>
-                    <div className="settings-buttons">
-                        <button onClick={this.saveSettings.bind(this)} className="settings-button-save">DONE</button>
-                    </div>
+                    <Pomodoro
+                        changeSaved={this.showSuccessMessage.bind(this)}
+                    />
                     { version}
                 </div>
             )

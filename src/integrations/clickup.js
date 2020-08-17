@@ -1,16 +1,20 @@
-'use strict';
-
-clockifyButton.render('#timeTrackingItem:not(.clockify)', {observe: true}, (elem) => {
-
-    var link,
-        description = $('.task-name', elem).textContent,
-        clockifyDiv = createTag('div', 'clockify-container'),
-        appendTo = $('.cu-task-info_time-tracking');
-
-    link = clockifyButton.createSmallButton(description);
-    link.style.position = "relative";
-    link.style.top = "0px";
-    link.style.left = "15px";
-    clockifyDiv.appendChild(link);
-    appendTo.parentNode.insertBefore(clockifyDiv, appendTo);
-});
+setTimeout(() => {
+  clockifyButton.render('.task__column.task__toolbar.task__toolbar_first:not(.clockify)', {observe: true}, function (elem) {
+    var link, description, project;
+    project = $("div.task-container__header.cu-hidden-print > cu-task-breadcrumbs > div > a:nth-child(4) > span").textContent;
+    task = $("cu-task-breadcrumbs > div > a.breadcrumbs__link.breadcrumbs__link_last.ng-star-inserted > span").textContent;
+    tags = () => Array.from($$(".cu-tags-select__name")).map(e => e.innerText);
+    link = clockifyButton.createButton({
+        description: document.title,
+        projectName: project,
+        taskName: task,
+        tagNames: tags
+    });
+    link.style.display = "block";
+    link.style.paddingTop = "10px";
+    link.style.paddingBottom = "10px";
+    link.style.marginBottom = "10px";
+    link.style.cursor = 'pointer';
+    elem.appendChild(link);
+  });
+}, 1000);

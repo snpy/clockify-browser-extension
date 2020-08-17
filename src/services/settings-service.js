@@ -18,15 +18,13 @@ export class SettingsService extends HttpWrapperService {
         return localStorageService.get('baseUrl');
     }
 
-    getLoginSettings(url) {
-        const loginSettingsUrl =
-            `${url}/system-settings/login-settings`;
-
-        return super.get(loginSettingsUrl);
-    }
-
     setSelfHosted(value) {
         localStorageService.set('selfHosted', value, getLocalStorageEnums().SELF_HOSTED_PREFIX);
+    }
+
+    getLoginSettings() {
+        const baseUrl = this.getBaseUrl() + '/system-settings/login-settings';
+        return super.get(baseUrl).then(response => response.data);
     }
 
     setHomeUrl(value) {
@@ -35,5 +33,9 @@ export class SettingsService extends HttpWrapperService {
 
     getHomeUrl() {
         return localStorageService.get('homeUrl');
+    }
+
+    setSubDomainName(value) {
+        localStorageService.set('subDomainName', value, getLocalStorageEnums().SUB_DOMAIN_PREFIX);
     }
 }

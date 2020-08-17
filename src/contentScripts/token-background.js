@@ -11,7 +11,7 @@ function getToken() {
 
         return this.refreshToken(refreshToken)
             .then(response => response.json()).then(data => {
-                aBrowser.storage.sync.set({
+                aBrowser.storage.local.set({
                     token: (data.token),
                     userId: (data.userId),
                     refreshToken: (data.refreshToken),
@@ -31,18 +31,16 @@ function getToken() {
     });
 }
 
-function refreshToken(refreshToken) {
-    const baseUrl = localStorage.getItem('permanent_baseUrl');
-    const refreshTokenUrl = `${baseUrl}/auth/token/refresh`;
+function refreshToken(token) {
+    const endpoint = localStorage.getItem('permanent_baseUrl');
+    const refreshTokenUrl = `${endpoint}/auth/token/refresh`;
+    const headers = new Headers(this.createHttpHeaders(token));
 
     let refreshTokenRequest = new Request(refreshTokenUrl, {
         method: 'POST',
-        headers: new Headers({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }),
+        headers: headers,
         body: JSON.stringify({
-            refreshToken: refreshToken
+            refreshToken: token
         })
     });
 
@@ -51,10 +49,13 @@ function refreshToken(refreshToken) {
 
 function isTokenValid(token) {
     if (!token) {
-        return;
+        return false;
     }
 
     const base64Url = token.split('.')[1];
+    if (!base64Url) {
+        return false;
+    }
     const base64 = base64Url
         .replace(/-/g, '+')
         .replace(/_/g, '/');

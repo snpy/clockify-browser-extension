@@ -1,33 +1,21 @@
-'use strict';
+clockifyButton.render('.gh-header-actions:not(.clockify)', {observe: true}, function (elem) {
+  issueId = $(".gh-header-number").innerText;
+  description = issueId + " " + $(".js-issue-title").innerText;
+  project = $("[data-pjax='#js-repo-pjax-container']").innerText;
+  tags = () => Array.from($$(".IssueLabel")).map(e => e.innerText),
 
-clockifyButton.render('#partial-discussion-sidebar:not(.clockify)', {observe: true}, (elem) => {
-    var div, link, description,
-        numElem = $('.gh-header-number'),
-        titleElem = $('.js-issue-title'),
-        projectElem = $('h1.public strong a, h1.private strong a'),
-        existingTag = $('.discussion-sidebar-item.clockify');
+  link = clockifyButton.createButton({
+      description: description,
+      projectName: project,
+      tagNames: tags
+  });
+  inputForm = clockifyButton.createInput({
+        description: description,
+        projectName: project,
+        tagNames: tags
+  });
 
-    // Check for existing tag, create a new one if one doesn't exist or is not the first one
-    // We want button to be the first one because it looks different from the other sidebar items
-    // and looks very weird between them.
-
-    if (existingTag) {
-        if (existingTag.parentNode.firstChild.classList.contains('clockify')) {
-            return;
-        }
-        existingTag.parentNode.removeChild(existingTag);
-    }
-
-    description = titleElem.textContent;
-    if (numElem !== null) {
-        description = numElem.textContent + " " + description.trim();
-    }
-
-    div = document.createElement("div");
-    div.classList.add("discussion-sidebar-item", "clockify");
-
-    link = clockifyButton.createButton(description);
-
-    div.appendChild(link);
-    elem.prepend(div);
+  link.style.padding = "3px 14px";
+  elem.prepend(link);
+  elem.prepend(inputForm);
 });

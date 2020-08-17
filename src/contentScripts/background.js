@@ -1,15 +1,5 @@
 let aBrowser = this.isChrome() ? chrome : browser;
 
-function isChrome() {
-    if (typeof chrome !== "undefined") {
-        if (typeof browser !== "undefined") {
-            return false;
-        } else {
-            return true;
-        }
-    }
-}
-
 const iconPathEnded = '../assets/images/logo-16-gray.png';
 const iconPathStarted = '../assets/images/logo-16.png';
 const clockifyProd = 'https://clockify.me/tracker';
@@ -39,11 +29,20 @@ aBrowser.windows.onCreated.addListener((window) => {
     if (this.isLoggedIn() && windowIds.length === 0) {
         this.getEntryInProgress()
             .then(response => response.json())
-            .then(data => {})
-            .catch(() => {
+            .then(data => {
+                this.entryInProgressChangedEventHandler(data);
+                aBrowser.browserAction.setIcon({
+                    path: iconPathStarted
+                });
+            }).catch(() => {
                 this.addReminderTimerOnStartingBrowser();
                 this.startTimerOnStartingBrowser();
+                this.entryInProgressChangedEventHandler(null);
+                aBrowser.browserAction.setIcon({
+                    path: iconPathEnded
+                });
             });
+            this.connectWebSocket();
     }
     windowIds = [...windowIds, window.id];
 });
@@ -56,6 +55,8 @@ aBrowser.windows.onRemoved.addListener((window) => {
     if (windowIds.length === 0) {
         this.removeReminderTimer();
         this.endInProgressOnClosingBrowser();
+        this.disconnectWebSocket();
+        this.restartPomodoro();
     }
 });
 
@@ -90,58 +91,79 @@ aBrowser.contextMenus.create({
 aBrowser.commands.onCommand.addListener((command) => {
     const activeWorkspaceId = localStorage.getItem("activeWorkspaceId");
     const token = localStorage.getItem('token');
-
     const timerShortcutFromStorage = localStorage.getItem('permanent_timerShortcut');
     const userId = localStorage.getItem('userId');
-
     const isTimerShortcutOn = timerShortcutFromStorage && JSON.parse(timerShortcutFromStorage)
         .filter(timerShortcutByUser =>
             timerShortcutByUser.userId === userId && JSON.parse(timerShortcutByUser.enabled)).length > 0;
 
-    if (isTimerShortcutOn) {
-        if (isLoggedIn()) {
-            if (command === commands.startStop) {
-                getInProgress(activeWorkspaceId, token)
-                    .then(response => response.json())
-                    .then(data => {
-                        this.endInProgress(new Date())
-                            .then(response => {
-                                if (response.status === 400) {
-                                    alert("You already have entry in progress which can't be saved" +
-                                        " without project/task/description or tags. Please edit your time entry.");
-                                } else {
-                                    window.inProgress = false;
-                                    aBrowser.browserAction.setIcon({
-                                        path: iconPathEnded
-                                    });
-                                }
+    if (!isTimerShortcutOn) return
+    if (isLoggedIn()) {
+        if (command !== commands.startStop) return
+        getInProgress(activeWorkspaceId, token)
+            .then(response => response.json())
+            .then(data => {
+                if (!data.projectId) {
+                    this.getDefaultProject().then(defaultProject => {
+                        if (defaultProject) {
+                            this.updateProject(defaultProject.id, data.id)
+                                .then(response => response.json())
+                                .then(data => {
+                                    this.endInProgress(new Date())
+                                        .then(response => {
+                                            if (response.status === 400) {
+                                                alert("You already have entry in progress which can't be saved" +
+                                                    " without project/task/description or tags. Please edit your time entry.");
+                                            } else {
+                                                window.inProgress = false;
+                                                aBrowser.browserAction.setIcon({
+                                                    path: iconPathEnded
+                                                });
+                                                aBrowser.runtime.sendMessage({eventName: 'TIME_ENTRY_STOPPED'});
+                                            }
+                                        });
+                                });
+                        }
+                    });
+                }
+                this.endInProgress(new Date())
+                    .then(response => {
+                        if (response.status === 400) {
+                            alert("You already have entry in progress which can't be saved" +
+                                " without project/task/description or tags. Please edit your time entry.");
+                        } else {
+                            window.inProgress = false;
+                            aBrowser.browserAction.setIcon({
+                                path: iconPathEnded
                             });
-                    })
-                    .catch(error => {
-                        startTimerBackground(activeWorkspaceId, token, "");
-                    })
-            }
-        } else {
-            alert('You must log in to use keyboard shortcut');
-        }
+                            aBrowser.runtime.sendMessage({eventName: 'TIME_ENTRY_STOPPED'});
+                        }
+                    });
+            })
+            .catch(error => {
+                startTimerBackground(activeWorkspaceId, token, "");
+            })
+    } else {
+        alert('You must log in to use keyboard shortcut');
     }
 });
 
 aBrowser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (tab.url.includes("clockify.me")) return
     aBrowser.storage.local.get('permissions', (result) => {
         let domain = extractDomain(tab.url, result.permissions);
 
-        if (tab.status === tabStatus.COMPLETE) {
+        if (changeInfo.status === "complete") {
             if (!tab.url.includes("chrome://") && isLoggedIn()) {
                 if (!!domain.file) {
                     aBrowser.tabs.insertCSS(tabId, {file: "integrations/style.css"});
-                    aBrowser.tabs.executeScript(tabId, {file: "integrations/button.js"}, () => {
+                    aBrowser.tabs.executeScript(tabId, {file: "integrations/button.js"}, (firstLoad) => {
                         loadScripts(tabId, domain.file);
                     });
                 }
             } else if (tab.url.includes(aBrowser.identity.getRedirectURL())) {
                 const token  = extractToken(tab.url);
-                refreshToken(token, tab.id);
+                this.refreshTokenAndFetchUser(token);
                 aBrowser.tabs.remove(tabId, () => {});
             }
         }
@@ -180,7 +202,7 @@ function extractToken(url) {
     let token = "";
 
     if (!!url) {
-        token = url.split('?')[1].split('=')[1];
+        token = url.split('?')[1].split('=')[1]
     }
 
     return token;
@@ -258,13 +280,24 @@ function isLoggedIn() {
 function startTimerWithDescription(info) {
     let token;
     let activeWorkspaceId;
-    aBrowser.storage.sync.get(['token', 'activeWorkspaceId'], function (result) {
+    aBrowser.storage.local.get(['token', 'activeWorkspaceId'], function (result) {
         token = result.token;
         activeWorkspaceId = result.activeWorkspaceId;
 
         getInProgress(activeWorkspaceId, token)
             .then(response => response.json())
             .then(data => {
+                if (!data.projectId) {
+                    this.getDefaultProject().then(defaultProject => {
+                        if (defaultProject) {
+                            this.updateProject(defaultProject.id, data.id)
+                                .then(response => response.json())
+                                .then(data => {
+                                    endInProgressAndStartNew(info);
+                                });
+                        }
+                    })
+                }
                 endInProgressAndStartNew(info);
             })
             .catch(error => {
@@ -273,46 +306,8 @@ function startTimerWithDescription(info) {
     });
 }
 
-function loginWithCode(code, state, nonce, redirectUri) {
-    const baseUrl = localStorage.getItem('permanent_baseUrl');
-    const loginWithCodeUrl = `${baseUrl}/auth/code`;
-
-    let loginWithCodeRequest = new Request(loginWithCodeUrl, {
-        method: 'POST',
-        headers: new Headers({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }),
-        body: JSON.stringify({
-            code: code,
-            timeZone: null,
-            state: state,
-            nonce: nonce,
-            redirectURI: redirectUri
-        })
-    });
-
-    return fetch(loginWithCodeRequest);
-}
-
-function fetchUser(userId) {
-    const baseUrl = localStorage.getItem('permanent_baseUrl');
-    const userUrl = `${baseUrl}/users/${userId}`;
-
-    let getUserRequest = new Request(userUrl, {
-        method: 'GET',
-        headers: new Headers({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'X-Auth-Token': localStorage.getItem('token')
-        })
-    });
-
-    return fetch(getUserRequest).then(response => response.json());
-}
-
 function endInProgressAndStartNew(info) {
-    aBrowser.storage.sync.get(['token', 'activeWorkspaceId'], (result) => {
+    aBrowser.storage.local.get(['token', 'activeWorkspaceId'], (result) => {
         let token = result.token;
         let activeWorkspaceId = result.activeWorkspaceId;
         this.endInProgress(new Date())
@@ -321,6 +316,8 @@ function endInProgressAndStartNew(info) {
                 if (data.code === 501) {
                     alert("You already have entry in progress which can't be saved without project/task/description or tags. Please edit your time entry.")
                 } else {
+                    this.entryInProgressChangedEventHandler(null);
+                    aBrowser.runtime.sendMessage({eventName: 'TIME_ENTRY_STOPPED'});
                     startTimerBackground(activeWorkspaceId, token, info && info.selectionText ? info.selectionText : "");
                 }
             })
@@ -336,47 +333,48 @@ function startTimerBackground(activeWorkspaceId, token, description) {
     const apiEndpoint = localStorage.getItem('permanent_baseUrl');
     let timeEntryUrl =
         `${apiEndpoint}/workspaces/${activeWorkspaceId}/timeEntries/`;
+    const headers = new Headers(this.createHttpHeaders(token));
 
-    let timeEntryRequest = new Request(timeEntryUrl, {
-        method: 'POST',
-        headers: new Headers({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'X-Auth-Token': token
-        }),
-        body: JSON.stringify({
-            start: new Date(),
-            description: description,
-            billable: false,
-            projectId: null,
-            tagIds: [],
-            taskId: null
-        })
+    this.getDefaultProject().then(defaultProject => {
+        let timeEntryRequest = new Request(timeEntryUrl, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({
+                start: new Date(),
+                description: description,
+                billable: false,
+                projectId: defaultProject ? defaultProject.id : null,
+                tagIds: [],
+                taskId: null
+            })
+        });
+
+        fetch(timeEntryRequest)
+            .then(response => response.json())
+            .then(data => {
+                if(!data.message) {
+                    window.inProgress = true;
+                    aBrowser.browserAction.setIcon({
+                        path: iconPathStarted
+                    });
+                    this.entryInProgressChangedEventHandler(data);
+                    aBrowser.runtime.sendMessage({eventName: 'TIME_ENTRY_STARTED'});
+                }
+
+            })
+            .catch(error => {
+            })
     });
-
-    fetch(timeEntryRequest)
-        .then(response => response.json())
-        .then(data => {
-            if(!data.message) {
-                window.inProgress = true;
-                aBrowser.browserAction.setIcon({
-                    path: iconPathStarted
-                });
-            }
-
-        })
-        .catch(error => {
-        })
 }
 
 function getInProgress(activeWorkspaceId, token) {
     const apiEndpoint = localStorage.getItem('permanent_baseUrl');
     let inProgressUrl = `${apiEndpoint}/workspaces/${activeWorkspaceId}/timeEntries/inProgress`;
+    const headers = new Headers(this.createHttpHeaders(token));
+
     let timeEntryInProgressRequest = new Request(inProgressUrl, {
         method: 'GET',
-        headers: new Headers({
-            'X-Auth-Token': token
-        })
+        headers: headers
     });
 
     return fetch(timeEntryInProgressRequest);
@@ -398,31 +396,8 @@ function oAuthLogin(request, sendResponse) {
             localStorage.removeItem('selfhosted_oAuthState');
 
             if (code && stateFromUrl) {
-                loginWithCode(code, stateFromUrl, request.nonce, request.redirectUri)
-                    .then(response => response.json())
-                    .then(data => {
-                    aBrowser.storage.sync.set({
-                        token: (data.token),
-                        userId: (data.id),
-                        refreshToken: (data.refreshToken),
-                        userEmail: (data.email)
-                    });
-                    localStorage.setItem('token', data.token);
-                    localStorage.setItem('refreshToken', data.refreshToken);
-                    localStorage.setItem('userId', data.id);
-                    localStorage.setItem('userEmail', data.email);
-
-                    fetchUser(data.id).then(data => {
-                        aBrowser.storage.sync.set({
-                            activeWorkspaceId: (data.activeWorkspace),
-                            userSettings: (JSON.stringify(data.settings))
-                        });
-                        localStorage.setItem('activeWorkspaceId', data.activeWorkspace);
-                        localStorage.setItem('userSettings', JSON.stringify(data.settings));
-
-                        sendResponse(true);
-                    });
-                });
+                this.loginWithCodeAndFetchUser(
+                    code, stateFromUrl, request.nonce, request.redirectUri, sendResponse);
             }
         }
     );
@@ -432,8 +407,19 @@ function saml2Login(request) {
     aBrowser.tabs.create(
         {url: aBrowser.runtime.getURL("saml2extension.html")},
         (tab) => {
-            let handler = (tabId, changeInfo) => {
+            const subDomainName = localStorage.getItem('sub-domain_subDomainName') ?
+                localStorage.getItem('sub-domain_subDomainName') : null;
+            let relayState;
+            if (subDomainName) {
+                relayState = JSON.stringify({
+                    location: aBrowser.identity.getRedirectURL(),
+                    organizationName: subDomainName
+                });
+            } else {
+                relayState = aBrowser.identity.getRedirectURL();
+            }
 
+            let handler = (tabId, changeInfo) => {
                 if(tabId === tab.id && changeInfo.status === "complete"){
                     aBrowser.tabs.onUpdated.removeListener(handler);
                     aBrowser.tabs.sendMessage(
@@ -441,7 +427,7 @@ function saml2Login(request) {
                         {
                             url: request.saml2Url,
                             SAMLRequest: request.saml2Request,
-                            RelayState: aBrowser.identity.getRedirectURL()
+                            RelayState: relayState
                         }
                     );
                 }
@@ -452,48 +438,9 @@ function saml2Login(request) {
                 {
                     url: request.saml2Url,
                     SAMLRequest: request.saml2Request,
-                    RelayState: aBrowser.identity.getRedirectURL()
+                    RelayState: relayState
                 }
             );
         }
     );
 }
-
-function refreshToken(token, tabId) {
-    const endpoint = localStorage.getItem('permanent_baseUrl');
-    const refreshTokenUrl = `${endpoint}/auth/token/refresh`;
-
-    let refreshTokenRequest = new Request(refreshTokenUrl, {
-        method: 'POST',
-        headers: new Headers({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }),
-        body: JSON.stringify({
-            refreshToken: token
-        })
-    });
-
-    fetch(refreshTokenRequest).then(response => response.json()).then(data => {
-        aBrowser.storage.sync.set({
-            token: (data.token),
-            userId: (data.id),
-            refreshToken: (data.refreshToken),
-            userEmail: (data.email)
-        });
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('refreshToken', data.refreshToken);
-        localStorage.setItem('userId', data.id);
-        localStorage.setItem('userEmail', data.email);
-
-        fetchUser(data.id).then(data => {
-            aBrowser.storage.sync.set({
-                activeWorkspaceId: (data.activeWorkspace),
-                userSettings: (JSON.stringify(data.settings))
-            });
-            localStorage.setItem('activeWorkspaceId', data.activeWorkspace);
-            localStorage.setItem('userSettings', JSON.stringify(data.settings));
-        });
-    });
-}
-

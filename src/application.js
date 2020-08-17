@@ -1,14 +1,14 @@
 import {getAppTypes} from "./enums/applications-types.enum";
 import {Extension} from "./application-types/extension";
-import {Desktop} from "./application-types/desktop";
-import {Mobile} from "./application-types/mobile";
 import {SettingsService} from "./services/settings-service";
 import {getEnv} from "./environment";
+import {LocalStorageService} from "./services/localStorage-service";
+import {getLocalStorageEnums} from "./enums/local-storage.enum";
 
 const extension = new Extension();
-const desktop = new Desktop();
 const settingsService = new SettingsService();
 const environment = getEnv();
+const localStorageService = new LocalStorageService();
 
 export class Application {
 
@@ -17,14 +17,12 @@ export class Application {
     }
 
     afterLoad() {
+        this.setWebSocketParamsToStorage();
         this.setBaseUrl();
         this.setHomeUrl();
         switch (this.appType) {
             case getAppTypes().EXTENSION:
                 extension.afterLoad();
-                break;
-            case getAppTypes().DESKTOP:
-                desktop.afterLoad();
                 break;
         }
     }
@@ -34,10 +32,18 @@ export class Application {
             case getAppTypes().EXTENSION:
                 extension.setIcon(iconStatus);
                 break;
-            case getAppTypes().DESKTOP:
-                desktop.setIcon(iconStatus);
-                break;
         }
+    }
+
+    setWebSocketParamsToStorage() {
+        localStorageService.set(
+            "webSocketEndpoint",
+            environment.webSocket.endpoint,
+            getLocalStorageEnums().PERMANENT_PREFIX);
+        localStorageService.set(
+            "webSocketClientId",
+            environment.webSocket.clientId,
+            getLocalStorageEnums().PERMANENT_PREFIX);
     }
 
     setBaseUrl() {

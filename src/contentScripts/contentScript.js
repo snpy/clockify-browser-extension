@@ -1,12 +1,12 @@
 const aBrowser = chrome || browser;
-render('.tracker__in-progress:not(.clockify)', {observe: true}, function (elem) {
+render('.cl-tracker-wrapper:not(.clockify)', {observe: true}, function (elem) {
     let workspaceId = JSON.parse(localStorage.getItem('defaultWorkspace')).id;
     let userId = JSON.parse(localStorage.getItem('user')).id;
     let userEmail = JSON.parse(localStorage.getItem('user')).email;
     let weekStart = JSON.parse(localStorage.getItem('user')).settings.weekStart;
     let timeZone = JSON.parse(localStorage.getItem('user')).settings.timeZone;
     let userSettings = JSON.parse(localStorage.getItem('user')).settings;
-    aBrowser.storage.sync.set({
+    aBrowser.storage.local.set({
         token: `${localStorage.getItem('token')}`,
         activeWorkspaceId: workspaceId,
         userId: userId,

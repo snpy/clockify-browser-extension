@@ -4,10 +4,14 @@ import {getDefaultProjectEnums} from "../enums/default-project.enum";
 import {ProjectService} from "../services/project-service";
 import {debounce} from "lodash";
 import {LocalStorageService} from "../services/localStorage-service";
+import * as ReactDOM from "react-dom";
+import CreateProjectComponent from "./create-project.component";
+import { ProjectHelper } from '../helpers/project-helper';
 
 const projectService = new ProjectService();
 const localStorageService = new LocalStorageService();
 const pageSize = 50;
+const projectHelper = new ProjectHelper()
 
 class ProjectList extends React.Component {
 
@@ -17,8 +21,8 @@ class ProjectList extends React.Component {
         this.state = {
             isOpen: false,
             selectedProject: {
-                name: 'Add project',
-                color: '#999999'
+                name: this.createNameForSelectedProject(),
+                color: this.getColorForProject()
             },
             selectedTaskName: '',
             projectList: this.props.defaultProject === true ?
@@ -28,7 +32,7 @@ class ProjectList extends React.Component {
                     tasks: [],
                     id: getDefaultProjectEnums().LAST_USED_PROJECT
                 }] :
-                !this.props.workspaceSettings.forceProjects ?
+                !this.props.workspaceSettings.forceProjects && this.props.selectedProject ?
                     [{name: 'No project', color: '#999999', tasks: []}] : [],
             page: 1,
             ready: false,
@@ -37,19 +41,45 @@ class ProjectList extends React.Component {
             title: '',
             filter: '',
             isSpecialFilter: localStorageService.get('workspaceSettings') ?
-                    JSON.parse(localStorageService.get('workspaceSettings')).projectPickerSpecialFilter : false
+                JSON.parse(localStorageService.get('workspaceSettings')).projectPickerSpecialFilter : false,
+            isEnabledCreateProject: false,
+            projectIdsWithPermissions: [],
+            specFilterNoTasksOrProject: ""
         };
         this.filterProjects = debounce(this.filterProjects, 500);
     }
 
     componentDidMount() {
         this.getProjects(this.state.page, pageSize);
+        this.isEnabledCreateProject();
+    }
+
+    getProjectsPermissionsForUser(projectIds) {
+        projectService.getProjectsPermissions(projectIds).then(response => {
+            const projectsIdsWithPermissionsSet = new Set(response.data.map(permission => permission.objectId));
+            const projectsIdsWithPermissions = [];
+            projectsIdsWithPermissionsSet.forEach(projectId => {
+                projectsIdsWithPermissions.push(projectId);
+            });
+
+            this.setState({
+                projectIdsWithPermissions: projectsIdsWithPermissions
+            });
+        });
+    }
+
+    isEnabledCreateProject() {
+        if (this.props.defaultProject) return
+        this.setState({
+            isEnabledCreateProject: !this.props.workspaceSettings.onlyAdminsCreateProject ||
+                this.props.isUserOwnerOrAdmin ? true : false
+        })
     }
 
     getProjects(page, pageSize) {
-        if (page === 0) {
+        if (page === 1) {
             this.setState({
-                projectList: !this.props.workspaceSettings.forceProjects ?
+                projectList: !this.props.workspaceSettings.forceProjects && this.props.selectedProject ?
                     [{name: 'No project', color: '#999999', tasks: []}] : []
             })
         }
@@ -57,20 +87,29 @@ class ProjectList extends React.Component {
             projectService.getProjectsWithFilter(this.state.filter, page, pageSize)
                 .then(response => {
                     this.setState({
-                        projectList: this.state.projectList.concat(response.data),
+                        projectList: 
+                            this.state.filter.length > 0 ? 
+                                this.state.projectList
+                                    .concat(response.data)
+                                    .filter(project => project.name !== "No project") :
+                                this.state.projectList.concat(response.data),
                         page: this.state.page + 1,
                         ready: true
                     }, () => {
                         this.setState({
                             clients: this.getClients(this.state.projectList),
-                            loadMore: response.data.length === pageSize ? true : false
+                            loadMore: response.data.length === pageSize ? true : false,
+                            specFilterNoTasksOrProject: 
+                                projectHelper.createMessageForNoTaskOrProject(
+                                    response.data, this.state.isSpecialFilter, this.state.filter
+                                )
                         });
 
                         if(!this.state.isOpen) {
                             this.mapSelectedProject();
                         }
-                    })
-
+                        this.getProjectsPermissionsForUser(this.state.projectList.map(project => project.id));
+                    });
                 })
                 .catch(() => {
                 });
@@ -82,7 +121,6 @@ class ProjectList extends React.Component {
     }
 
     mapSelectedProject() {
-
         const selectedProject = this.props.selectedProject === 'lastUsedProject' ?
             {
                 name: 'Last used project',
@@ -92,8 +130,7 @@ class ProjectList extends React.Component {
             } :
             this.state.projectList.filter(p => p.id === this.props.selectedProject)[0];
 
-
-        if (this.props.selectedProject && selectedProject) {
+            if (this.props.selectedProject && selectedProject) {
             this.setState({
                 selectedProject: selectedProject
             }, () => {
@@ -142,8 +179,8 @@ class ProjectList extends React.Component {
                 this.setState({
                     selectedProject: {
                         name: this.props.defaultProject === true ?
-                            'Select default project' : 'Add project',
-                        color: '#999999'
+                            'Select default project' : this.createNameForSelectedProject(),
+                        color: this.getColorForProject()
                     }
                 }, () => {
                     this.setState({
@@ -156,17 +193,32 @@ class ProjectList extends React.Component {
 
     getClients(projects) {
         const clients = new Set(projects.filter(p => p.client).map(p => p.client.name))
-
-        return ['Without client', ...clients]
+        if (projects && projects.length > 0) {
+            return ['Without client', ...clients]
+        } else {
+            return []
+        }
     }
 
     selectProject(project) {
         this.props.selectProject(project);
+        let projectList;
+        if (project.id && !this.props.forceProjects && !this.props.defaultProject) {
+            if (this.state.projectList.filter(project => project.name === "No project").length == 0) {
+                projectList = 
+                    [{name: 'No project', color: '#999999', tasks: []}, ...this.state.projectList]
+            } else {
+                projectList = this.state.projectList
+            }
+        } else {
+            projectList = this.state.projectList.filter(project => project.name !== "No project")
+        }
 
         this.setState({
                 selectedProject: project,
                 selectedTaskName: '',
-                isOpen: false
+                isOpen: false,
+                projectList: projectList
             }, () => this.setState({
                 title: this.createTitle()
             })
@@ -174,7 +226,7 @@ class ProjectList extends React.Component {
     }
 
     selectTask(task, project) {
-        this.props.selectTask(task.id, project);
+        this.props.selectTask(task, project);
 
         this.setState({
                 selectedProject: project,
@@ -189,10 +241,15 @@ class ProjectList extends React.Component {
     openProjectDropdown() {
         if (!JSON.parse(localStorage.getItem('offline'))) {
             this.setState({
-                isOpen: true
+                isOpen: true,
+                page: 1
             }, () => {
-                document.getElementById('filter').focus();
+                document.getElementById('project-filter').focus();
+                this.props.projectListOpened();
             });
+            if (this.state.projectList.filter(project => project.name !== "No project").length === 0) {
+                this.createProject()
+            }
         }
     }
 
@@ -200,21 +257,19 @@ class ProjectList extends React.Component {
         document.getElementById('project-dropdown').scroll(0, 0);
         this.setState({
             isOpen: false,
-            projectList: !this.props.workspaceSettings.forceProjects ?
-            [{name: 'No project', color: '#999999', tasks: []}] : [],
             page: 1,
             filter: ''
         }, () => {
-            document.getElementById('filter').value = "";
+            document.getElementById('project-filter').value = "";
             this.getProjects(this.state.page, pageSize);
         });
     }
 
     filterProjects() {
         this.setState({
-            projectList: !this.props.workspaceSettings.forceProjects ?
+            projectList: !this.props.workspaceSettings.forceProjects && this.props.selectedProject ?
                 [{name: 'No project', color: '#999999', tasks: []}] : [],
-            filter: document.getElementById('filter').value.toLowerCase(),
+            filter: document.getElementById('project-filter').value.toLowerCase(),
             page: 1
         }, () => {
             this.getProjects(this.state.page, pageSize);
@@ -242,6 +297,58 @@ class ProjectList extends React.Component {
         return title;
     }
 
+    createNameForSelectedProject() {
+        let name = 'Add project';
+
+        if (this.props.projectRequired) {
+            name += ' (project ';
+
+            if (this.props.taskRequired) {
+                name += 'and task ';
+            }
+
+            name += 'required)'
+        }
+
+        return name;
+    }
+
+    clearProjectFilter() {
+        this.setState({
+            projectList: !this.props.workspaceSettings.forceProjects && this.props.selectedProject && this.props.selectedProject.id ?
+                [{name: 'No project', color: '#999999', tasks: []}] : [],
+            filter: '',
+            page: 1
+        }, () => {
+            this.getProjects(this.state.page, pageSize);
+            document.getElementById('project-filter').value = null
+        });
+    }
+
+    getColorForProject() {
+        const userId = localStorageService.get('userId');
+        const darkModeFromStorage = localStorageService.get('darkMode') ?
+            JSON.parse(localStorageService.get('darkMode')) : [];
+
+        if (darkModeFromStorage.length > 0 &&
+            darkModeFromStorage.filter(darkMode => darkMode.userId === userId && darkMode.enabled).length > 0
+        ) {
+            return '#90A4AE';
+        } else {
+            return '#999999';
+        }
+    }
+    createProject() {
+        ReactDOM.render(<CreateProjectComponent
+            timeEntry={this.props.timeEntry}
+            editForm={this.props.editForm}
+            workspaceSettings={this.props.workspaceSettings}
+            timeFormat={this.props.timeFormat}
+            isUserOwnerOrAdmin={this.props.isUserOwnerOrAdmin}
+            userSettings={this.props.userSettings}
+        />, document.getElementById('mount'));
+    }
+
     render() {
         if (!this.state.ready) {
             return null;
@@ -251,62 +358,81 @@ class ProjectList extends React.Component {
                      title={this.state.title}>
                     <div onClick={this.openProjectDropdown.bind(this)}
                          className={JSON.parse(localStorage.getItem('offline')) ?
-                             "project-list-button-offline" : "project-list-button"}>
-                    <span style={{color: this.state.selectedProject.color}}
-                          className="project-list-name">
-                        {this.state.selectedProject.name}
-                        <span className={this.state.selectedTaskName === "" ? "disabled" : ""}>
-                            {" : " + this.state.selectedTaskName}
+                             "project-list-button-offline" : this.props.projectRequired || this.props.taskRequired ?
+                                 "project-list-button-required" : "project-list-button"}>
+                        <span style={{color: this.state.selectedProject.color}}
+                              className="project-list-name">
+                            {this.state.selectedProject.name}
+                            <span className={this.state.selectedTaskName === "" ? "disabled" : ""}>
+                                {" : " + this.state.selectedTaskName}
+                            </span>
                         </span>
-                    </span>
-                        <span className="project-list-arrow">
-                    </span>
+                            <span className="project-list-arrow">
+                        </span>
                     </div>
                     <div className={this.state.isOpen ? "project-list-open" : "disabled"}>
                         <div onClick={this.closeProjectList.bind(this)} className="invisible"></div>
                         <div className="project-list-dropdown"
                              id="project-dropdown">
-                            <div className="project-list-input">
-                                <input
-                                    placeholder={
-                                        this.state.isSpecialFilter ?
-                                            "Filter task @project or client" : "Filter projects"
-                                    }
-                                    className="project-list-filter"
-                                    onChange={this.filterProjects.bind(this)}
-                                    id="filter"
-                                />
-                            </div>
-                            {
-                                this.state.clients.map(client => {
-                                    return (
-                                        <div>
-                                            <div className="project-list-client">{client}</div>
-                                            {
-                                                this.state.projectList
-                                                    .filter(project =>
-                                                        (project.client && project.client.name === client) ||
-                                                        (!project.client && client === 'Without client'))
-                                                    .map(project => {
-                                                        return (
-                                                            <a>
+                            <div className="project-list-dropdown--content">
+                                <div className="project-list-input">
+                                    <div className="project-list-input--border">
+                                        <input
+                                            placeholder={
+                                                this.state.isSpecialFilter ?
+                                                    "Filter task @project or client" : "Filter projects"
+                                            }
+                                            className="project-list-filter"
+                                            onChange={this.filterProjects.bind(this)}
+                                            id="project-filter"
+                                        />
+                                        <span className={!!this.state.filter ? "project-list-filter__clear" : "disabled"}
+                                              onClick={this.clearProjectFilter.bind(this)}></span>
+                                    </div>
+                                </div>
+                                {
+                                    this.state.clients.map(client => {
+                                        return (
+                                            <div>
+                                                <div className="project-list-client">{client}</div>
+                                                {
+                                                    this.state.projectList
+                                                        .filter(project =>
+                                                            (project.client && project.client.name === client) ||
+                                                            (!project.client && client === 'Without client'))
+                                                        .map(project => {
+                                                            return (
                                                                 <ProjectItem
                                                                     project={project}
                                                                     noTasks={this.props.noTasks}
                                                                     selectProject={this.selectProject.bind(this)}
                                                                     selectTask={this.selectTask.bind(this)}
                                                                     workspaceSettings={this.props.workspaceSettings}
+                                                                    projectIdsWithPermissions={this.state.projectIdsWithPermissions}
+                                                                    isUserOwnerOrAdmin={this.props.isUserOwnerOrAdmin}
                                                                 />
-                                                            </a>
-                                                        )
-                                                    })
-                                            }
-                                        </div>
-                                    )
-                                })
-                            }
-                            <div className={this.state.loadMore ? "project-list-load" : "disabled"}
-                                 onClick={this.loadMoreProjects.bind(this)}>Load more
+                                                            )
+                                                        })
+                                                }
+                                            </div>
+                                        )
+                                    })
+                                }
+                                <div className={this.state.specFilterNoTasksOrProject.length > 0 ? "project-list__spec_filter_no_task_or_project" : "disabled"}>
+                                    <span>{this.state.specFilterNoTasksOrProject}</span>
+                                </div>
+                                <div className={this.state.loadMore ? "project-list-load" : "disabled"}
+                                     onClick={this.loadMoreProjects.bind(this)}>Load more
+                                </div>
+                                <div className={this.state.isEnabledCreateProject ?
+                                        "projects-list__bottom-padding" : "disabled"}>
+                                </div>
+                                <div className={this.state.isEnabledCreateProject ?
+                                        "projects-list__create-project" : "disabled"}
+                                     onClick={this.createProject.bind(this)}>
+                                    <span className="projects-list__create-project--icon"></span>
+                                    <span className="projects-list__create-project--text">Create new project</span>
+                                </div>
                             </div>
                         </div>
                     </div>

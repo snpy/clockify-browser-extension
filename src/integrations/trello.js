@@ -1,38 +1,48 @@
-'use strict';
-clockifyButton.render('.window-header:not(.clockify)', {observe: true}, (elem) => {
-    let link, container = createTag('div', 'button-link trello-tb-wrapper'),
-        desc, project,
-        titleElem = $('.window-title h2', elem),
-        projectElem = $('.board-header-btn-name > span'),
-        descriptionElem = $('.js-move-card');
-    if (!descriptionElem) {
-        return;
-    }
+setTimeout(() => {
+    clockifyButton.render('.window-sidebar:not(.clockify)', {observe: true}, (elem) => {
+        const root = $('div[id="trello-root"]');
+        const container = elem.lastChild.childNodes[1];
+        const htmlTag = createTag('div', 'button-link');
+        const htmlTagInput = createTag('div', 'button-link');
+        const projectElem = $('.board-header-btn-text', root).textContent.trim();
+        const desc = $('div[class="window-title"] > h2', root).textContent.trim();
+        htmlTagInput.style.padding = "0px";
 
-    desc = titleElem.textContent;
+        const inputForm = clockifyButton.createInput({
+            description: desc,
+            projectName: projectElem
+        });
+        htmlTagInput.appendChild(inputForm);
+        container.prepend(htmlTagInput);
 
-    project = projectElem.textContent.trim();
+        const link = clockifyButton.createButton(desc, projectElem);
+        htmlTag.appendChild(link);
+        container.prepend(htmlTag);
+        $('.clockify-input').style.width = "100%";
+        $('.clockify-input').style.boxShadow = "none";
+        $('.clockify-input').style.border = "1px solid #eaecf0";
+        $('.clockify-input').style.backgroundColor = "#eaecf0";
 
-    link = clockifyButton.createButton(desc, project);
-    container.appendChild(link);
-    descriptionElem.parentNode.insertBefore(container, descriptionElem);
-}, ".window-wrapper");
+    });
 
-/* Checklist buttons */
-clockifyButton.render('.checklist-item-details:not(.clockify)', {observe: true}, (elem) => {
-    let link,
-        projectElem = $('.board-header-btn-name > span'),
-        titleElem = $('.window-title h2'),
-        taskElem = $('.checklist-item-details-text', elem);
+    /* Checklist buttons */
+    clockifyButton.render('.checklist-item-details:not(.clockify)', {observe: true}, (elem) => {
+        const root = $('div[id="trello-root"]');
+        const project= $('.board-header-btn > span').textContent.trim();
+        const desc = $('div[class="window-title"] > h2', root).textContent;
+        const task = $('.checklist-item-details-text', elem).textContent;
 
-    link = clockifyButton.createSmallButton(
-        titleElem.textContent + " - " + taskElem.textContent,
-        projectElem.textContent.trim()
-        );
-    link.classList.add('checklist-item-button');
-    link.style.position = 'absolute';
-    link.style.paddingTop = 0;
-    link.style.right = 0;
-    link.style.top = 0;
-    elem.parentNode.appendChild(link);
-}, ".checklist-items-list, .window-wrapper");
+        const link = clockifyButton.createButton({
+            description: task + " - " + desc,
+            projectName: project,
+            small: true
+        });
+        link.classList.add('checklist-item-button');
+        link.style.position = 'absolute';
+        link.style.paddingTop = 0;
+        link.style.paddingRight = 0;
+        link.style.right = '81px';
+        link.style.top = '8px';
+        elem.appendChild(link);
+    });
+}, 1000);

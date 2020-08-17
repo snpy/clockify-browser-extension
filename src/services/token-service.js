@@ -2,8 +2,8 @@ import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import Login from '../components/login.component';
 import * as jwt from 'jsonwebtoken';
-import {getBrowser} from "../helpers/browser-helpers";
-import {isAppTypeExtension} from "../helpers/app-types-helpers";
+import {getBrowser} from "../helpers/browser-helper";
+import {isAppTypeExtension} from "../helpers/app-types-helper";
 import {HttpService} from "./http-service";
 import {LocalStorageService} from "./localStorage-service";
 
@@ -30,7 +30,7 @@ export class TokenService {
                 .then(response => {
                     let data = response.data;
                     if (isAppTypeExtension()) {
-                        getBrowser().storage.sync.set({
+                        getBrowser().storage.local.set({
                             token: (data.token),
                             userId: (data.userId),
                             refreshToken: (data.refreshToken),
@@ -75,7 +75,12 @@ export class TokenService {
     }
 
     logout() {
+        if (!document.getElementById('mount')) return
         ReactDOM.unmountComponentAtNode(document.getElementById('mount'));
         ReactDOM.render(<Login logout={true}/>, document.getElementById('mount'));
+    }
+
+    isLoggedIn() {
+        return localStorageService.get('token') !== null && localStorageService.get('token') !== undefined;
     }
 }

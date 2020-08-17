@@ -7,15 +7,20 @@
     "scripts": [
       "main.bundle.js",
       "vendors.main.bundle.js",
+      "contentScripts/helper-background.js",
       "contentScripts/background.js",
+      "contentScripts/webSocket-background.js",
       "contentScripts/timeEntry-httpRequests-background.js",
       "contentScripts/token-background.js",
       "contentScripts/idle-detection-background.js",
       "contentScripts/notification-background.js",
-      "contentScripts/reminder-background.js"
+      "contentScripts/reminder-background.js",
+      "contentScripts/pomodoro-background.js",
+      "contentScripts/workspace-httpRequests-background.js",
+      "contentScripts/project-httpRequests-background.js"
     ]
   },
-  "version": "1.6.2",
+  "version": "1.8.30",
   "browser_action": {
     "default_popup": "index.html",
     "default_title": "Clockify"
@@ -43,22 +48,22 @@
     "128":"assets/images/logo-128.png"
   },
   "oauth2": {
-    "client_id": "your-client-id-from-google-api-console",
+    "client_id": "your-google-client-id",
     "scopes": ["openid", "email", "profile", "https://www.googleapis.com/auth/userinfo.email"]
   },
   "permissions": [
     "background",
     "contextMenus",
-    "https://clockify.me/api/*",
+    "*://*.clockify.me/*",
     "storage",
     "tabs",
+    "*://*/",
     "webNavigation",
     "activeTab",
-    "<all_urls>",
     "identity",
-    "https://accounts.google.com/*",
     "idle",
     "notifications"
   ],
+  "optional_permissions": ["*://*/"],
   "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'"
 }

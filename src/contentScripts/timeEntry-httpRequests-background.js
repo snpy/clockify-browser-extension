@@ -1,7 +1,7 @@
 function startTimerWithDescription(info) {
     let token;
     let activeWorkspaceId;
-    aBrowser.storage.sync.get(['token', 'activeWorkspaceId'], function (result) {
+    aBrowser.storage.local.get(['token', 'activeWorkspaceId'], function (result) {
         token = result.token;
         activeWorkspaceId = result.activeWorkspaceId;
 
@@ -17,40 +17,34 @@ function startTimerWithDescription(info) {
 }
 
 function endInProgressAndStartNew(info) {
-    aBrowser.storage.sync.get(['token', 'activeWorkspaceId'], function (result) {
-        let token = result.token;
-        let activeWorkspaceId = result.activeWorkspaceId;
-
-        this.endInProgress(new Date())
-            .then(response => response)
-            .then(data => {
-                if(data.status === 400) {
-                    alert("You already have entry in progress which can't be saved without project/task/description or tags. Please edit your time entry.")
-                } else {
-                    startTimer(info && info.selectionText ? info.selectionText : "");
-                }
-            })
-            .catch(() => {
-                aBrowser.browserAction.setIcon({
-                    path: iconPathEnded
-                });
-            })
-    });
+    this.endInProgress(new Date())
+        .then(response => response)
+        .then(data => {
+            if(data.status === 400) {
+                alert("You already have entry in progress which can't be saved without project/task/description or tags. Please edit your time entry.")
+            } else {
+                this.entryInProgressChangedEventHandler(null);
+                startTimer(info && info.selectionText ? info.selectionText : "");
+            }
+        })
+        .catch(() => {
+            aBrowser.browserAction.setIcon({
+                path: iconPathEnded
+            });
+        })
 }
 
-function endInProgress(end) {
+function endInProgress(end, isWebSocketHeader) {
     const token = localStorage.getItem('token');
     const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
     const apiEndpoint = localStorage.getItem('permanent_baseUrl');
+    const headers = new Headers(this.createHttpHeaders(token));
 
     const endInProgressUrl = `${apiEndpoint}/workspaces/${activeWorkspaceId}/timeEntries/endStarted`;
 
     const endRequest = new Request(endInProgressUrl, {
         method: 'PUT',
-        headers: new Headers({
-            'X-Auth-Token': token,
-            'Content-Type': 'application/json',
-        }),
+        headers: headers,
         body: JSON.stringify({
             end: end
         })
@@ -63,27 +57,25 @@ function startTimer(description, options) {
     const token = localStorage.getItem('token');
     const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
     const apiEndpoint = localStorage.getItem('permanent_baseUrl');
+    const headers = new Headers(this.createHttpHeaders(token));
+
     let timeEntryUrl =
         `${apiEndpoint}/workspaces/${activeWorkspaceId}/timeEntries/`;
 
     let timeEntryRequest = new Request(timeEntryUrl, {
         method: 'POST',
-        headers: new Headers({
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'X-Auth-Token': token
-        }),
+        headers: headers,
         body: JSON.stringify({
             start: new Date(),
             description: description,
             billable: false,
             projectId: options && options.projectId ? options.projectId : null,
-            tagIds: options && options.tagIds ? options.tagIds : [],
-            taskId: options && options.taskId ? options.taskId : null
+            tagIds: options && options.tags ? options.tags.map(tag => tag.id): [],
+            taskId: options && options.task ? options.task.id : null
         })
     });
 
-    fetch(timeEntryRequest)
+    return fetch(timeEntryRequest)
         .then(response => response.json())
         .then(data => {
             if(!data.message) {
@@ -91,30 +83,32 @@ function startTimer(description, options) {
                 aBrowser.browserAction.setIcon({
                     path: iconPathStarted
                 });
-            }
 
+                this.entryInProgressChangedEventHandler(data);
+            }
+            return data;
         })
         .catch(error => {
-        })
+            return error;
+        });
 }
 
 function getEntryInProgress() {
     const apiEndpoint = localStorage.getItem('permanent_baseUrl');
     const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
     const token = localStorage.getItem('token');
+    const headers = new Headers(this.createHttpHeaders(token));
 
     let inProgressUrl = `${apiEndpoint}/workspaces/${activeWorkspaceId}/timeEntries/inProgress`;
     let timeEntryInProgressRequest = new Request(inProgressUrl, {
         method: 'GET',
-        headers: new Headers({
-            'X-Auth-Token': token
-        })
+        headers: headers
     });
 
     return fetch(timeEntryInProgressRequest);
 }
 
-function deleteEntry(entryId) {
+function deleteEntry(entryId, isWebSocketHeader) {
     const apiEndpoint = localStorage.getItem('permanent_baseUrl');
     const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
     const token = localStorage.getItem('token');
@@ -122,14 +116,16 @@ function deleteEntry(entryId) {
     const deleteUrl =
         `${apiEndpoint}/workspaces/${activeWorkspaceId}/timeEntries/${entryId}`;
 
+    const headers = new Headers(this.createHttpHeaders(token));
+
     let deleteEntryRequest = new Request(deleteUrl, {
         method: 'DELETE',
-        headers: new Headers({
-            'X-Auth-Token': token
-        })
+        headers: headers
     });
 
-    fetch(deleteEntryRequest).then(() => {});
+    return fetch(deleteEntryRequest).then(() => {
+        this.entryInProgressChangedEventHandler(null);
+    });
 
 }
 
@@ -140,7 +136,9 @@ function startTimerOnStartingBrowser() {
             .filter(autoStart => autoStart.userId === userId && autoStart.enabled).length > 0 : false;
 
     if (autoStartForCurrentUserEnabled) {
-        this.startTimer('');
+        this.getDefaultProject().then(defaultProject => {
+            this.startTimer('', defaultProject ? {projectId: defaultProject.id} : {});
+        });
     }
 }
 
@@ -152,6 +150,23 @@ function endInProgressOnClosingBrowser() {
 
     if (autoStopForCurrentUserEnabled) {
         this.getEntryInProgress().then(response => response.json()).then(data => {
+            if (!data.projectId) {
+                this.getDefaultProject().then(defaultProject => {
+                    if (defaultProject) {
+                        this.updateProject(defaultProject.id, data.id)
+                            .then(response => response.json())
+                            .then(data => {
+                                this.endInProgress(new Date()).then((response) => {
+                                    if (response.status === 400) {
+                                        const endTime = new Date();
+                                        this.saveEntryOfflineAndStopItByDeletingIt(data, endTime);
+                                    }
+                                });
+                            }
+                        );
+                    }
+                });
+            }
             this.endInProgress(new Date()).then((response) => {
                 if (response.status === 400) {
                     const endTime = new Date();
@@ -162,18 +177,12 @@ function endInProgressOnClosingBrowser() {
     }
 }
 
-aBrowser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.eventName === 'getEntryInProgress') {
-        sendResponse(document.timeEntry);
-    }
-});
-
-function saveEntryOfflineAndStopItByDeletingIt(data, end) {
+function saveEntryOfflineAndStopItByDeletingIt(data, end, isWebSocketHeader) {
     const timeEntry = {
         id: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
         description: data.description,
         projectId: data.projectId,
-        taskId: data.taskId,
+        taskId: data.task ? data.task.id : null,
         billabe: data.billable,
         timeInterval: {
             start: data.timeInterval.start,
@@ -186,5 +195,50 @@ function saveEntryOfflineAndStopItByDeletingIt(data, end) {
     timeEntriesOffline.push(timeEntry);
     localStorage.setItem('timeEntriesOffline', JSON.stringify(timeEntriesOffline));
 
-    this.deleteEntry(data.id);
+    return this.deleteEntry(data.id, isWebSocketHeader);
+}
+
+function getLastEntry() {
+    const apiEndpoint = localStorage.getItem('permanent_baseUrl');
+    const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
+    const token = localStorage.getItem('token');
+    const userId = localStorage.getItem('userId');
+
+    const getLastEntryUrl = `${apiEndpoint}/v1/workspaces/${activeWorkspaceId}/user/${userId}/time-entries?page-size=2`;
+
+    const headers = new Headers(this.createHttpHeaders(token));
+
+
+    let lastEntryRequest = new Request(getLastEntryUrl, {
+        method: 'GET',
+        headers: headers
+    });
+
+    return fetch(lastEntryRequest).then(response => response.json()).then(timeEntries => {
+        if (timeEntries && timeEntries.length > 0) {
+            return timeEntries.filter(entry => !!entry.timeInterval.end)[0];
+        } else {
+            return new Promise((resolve, reject) => reject());
+        }
+    });
+}
+
+function updateProject(projectId, timeEntryId) {
+    const apiEndpoint = localStorage.getItem('permanent_baseUrl');
+    const activeWorkspaceId = localStorage.getItem('activeWorkspaceId');
+    const token = localStorage.getItem('token');
+    const updateProjectUrl =
+        `${apiEndpoint}/workspaces/${activeWorkspaceId}/timeEntries/${timeEntryId}/project`;
+    const headers = new Headers(this.createHttpHeaders(token));
+    const body = {
+        projectId: projectId
+    };
+
+    let updateProjectRequest = new Request(updateProjectUrl, {
+        method: 'PUT',
+        headers: headers,
+        body: JSON.stringify(body)
+    });
+
+    return fetch(updateProjectRequest);
 }

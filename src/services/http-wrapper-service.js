@@ -1,17 +1,16 @@
 import {HttpService} from "./http-service";
 import {TokenService} from "./token-service";
+import {HttpHeadersHelper} from "../helpers/http-headers-helper";
 
 const httpService = new HttpService();
 const tokenService = new TokenService();
+const httpHeadersHelper = new HttpHeadersHelper();
 
 export class HttpWrapperService {
     constructor() {}
 
     get(url, addToken) {
-        let headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        };
+        let headers = httpHeadersHelper.createHttpHeaders();
 
         if (addToken) {
             return tokenService.getToken().then(token => {
@@ -28,10 +27,7 @@ export class HttpWrapperService {
     }
 
     put(url, body, addToken) {
-        let headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        };
+        let headers = httpHeadersHelper.createHttpHeaders();
 
         if (addToken) {
             return tokenService.getToken().then(token => {
@@ -47,10 +43,7 @@ export class HttpWrapperService {
     }
 
     post(url, body, addToken) {
-        let headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        };
+        let headers = httpHeadersHelper.createHttpHeaders();
 
         if (addToken) {
             return tokenService.getToken().then(token => {
@@ -66,10 +59,7 @@ export class HttpWrapperService {
     }
 
     delete(url, addToken) {
-        let headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        };
+        let headers = httpHeadersHelper.createHttpHeaders();
 
         if (addToken) {
             return tokenService.getToken().then(token => {
@@ -81,6 +71,7 @@ export class HttpWrapperService {
                 }
             });
         }
+
         return httpService.delete(url, headers);
     }
 }
